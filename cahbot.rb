@@ -11,6 +11,8 @@ class Player
 	attr_accessor :white_cards, :black_cards, :user, :picked_card, :selected
 	attr_accessor :name
 	attr_accessor :score
+	attr_accessor :id
+	
 
 	def initialize(user)
 		@user = user
@@ -18,18 +20,20 @@ class Player
 		@white_cards = []
 		@black_cards = []
 		@score = 0
+		@id = 0
 		@picked_card = false
 		@selected = []
 	end
 
-	def print_player
-		"#{@name} - #{@score} points"
+	def print_player(pts=true, picked=false)
+		"#{@name} #{" --DIDN'T PICK CARDS YET-- " if picked and not @picked_card and @name != $game.czar.name }(#{@score} points)"
 	end
 
 end
 
 class CAHGame
-	attr_accessor :game_state, :players, :czar, :creator, :round_in_progress, :black_card, :channel
+	attr_accessor :game_state, :players, :czar, :creator, :round_in_progress,
+		:black_card, :channel, :next_players, :card_map
 
 	def initialize()
 		@players = []
@@ -37,14 +41,23 @@ class CAHGame
 		@czar = nil
 		@creator = ""
 		@round_in_progress = false
+		@next_players = []
 		@black_card = {:card => nil, :blanks => 0}
+		@card_map = {}
 		@m = nil
 	end
 
 	def start_round()
+		@players += @next_players
 		@round_in_progress = true
 
-		@czar = @players.sample
+		old = @czar
+
+		loop do
+			@czar = @players.sample
+			break if @czar != old
+		end
+
 		@czar.user.notice("Hey, you're the card czar for this round. " +
 			"Sit back and relax for a second while the others choose cards.")
 
@@ -53,7 +66,7 @@ class CAHGame
 
 
 		@m.reply "Our Card Czar this round is #{@czar.name}. " +
-			"The black card is '#{@black_card[:card]}' (#{@black_card[:blanks]} blanks)"
+			"The black card is '#{@black_card[:card]}' (#{@black_card[:blanks]} blank(s))"
 
 		deal_round()
 	end
@@ -65,12 +78,13 @@ class CAHGame
 			p = player and break if player.name == m.user.nick		
 		end
 
-		r.reply "You're not in the game, #{m.user.nick}! ^join to join it." and return if not p
+		m.reply "You're not in the game, #{m.user.nick}! ^join to join it." and return if not p
 
+			
 		p.selected << i
-
-		p.picked_card = true
-		
+		m.reply "Too many cards #{m.user.nick}! I'm removing that last one for you" \
+			and p.selected.pop if p.selected.size > @black_card[:blanks]
+		p.picked_card = true if p.selected.size == @black_card[:blanks]
 
 		@players.each do |player|
 			return :round_on if not player.picked_card and player.name != @czar.name
@@ -84,7 +98,9 @@ class CAHGame
 			return false if p.name == user.nick
 		end
 
-		@players << Player.new(user)
+		@players << Player.new(user) if @game_state == :lobby
+		@next_players << Player.new(user) if @game_state == :play
+		true
 	end
 
 	def start_lobby(message)
@@ -132,33 +148,36 @@ class CAHGame
 		end
 	end
 
-	def print_players()
-		s = ""
-		@players.each do |player|
-			s += player.print_player + ", "
-		end
-		if s == "" then
-			"It seems that everyone is a loser. No one joined"
-		else
-			s
-		end
+	def print_players(a=true, b=false)
+		return "It seems that everyone is a loser. No one joined #{@creator}'s awesome game" if @players.size == 0
+
+		@players.map {|player| player.print_player(a, b)}.join(", ")
 	end
 
-	def pick_winner(nick)
+	def pick_winner(id)
 
 		p = nil
 
 		@players.each do |player|
 			@m.reply "HEY WOAH. Take it easy man. Give them a chance to pick some cards" and \
 				return if not player.picked_card and player.name != @czar.name
-			p = player and break if player.name == nick and nick != @czar.name
 		end
-		@m.reply "Silly #{@czar.name}, #{nick} isn't playing in this game!" and return if not p
 
+		@players.each do |player|
+			next if player.name == @czar.name
+			p = player if player.id == id	
+		end
+
+		@m.reply "I don't know who #{id} is supposed to be, but they're not here" and return if not p
+		
 		i = 0
-		@m.reply "We have a winner! #{nick} said \"" +
-			"#{@black_card[:card].gsub("_")do |_|; i+=1;p.white_cards[i-1]; end}\""
+		@black_card[:card].gsub!("_") {
+			i += 1
+			c = p.selected[i - 1] - 1
+			p.white_cards[c]
+		}
 
+		@m.reply "We have a winner! #{p.name} said \"#{@black_card[:card]}\""
 		p.score += 1
 
 		@players.each do |player|
@@ -167,32 +186,34 @@ class CAHGame
 				remove << player.white_cards[x - 1]
 			}
 
-		puts "removing: #{remove}"
-		
 		player.white_cards -= remove
 
 		end
 
 		start_round
-
 	end
 
 	def send_choices()
-		@czar.user.notice("Here are your choices for this round:")
+		@m.reply("'#{@black_card[:card]}'")
+
+		ids = (1..@players.size).to_a
+		@players.shuffle
 
 		@players.each do |player|
 			next if player.name == @czar.name
-	
+			
+			player.id = ids.shift
+
 			cards = []
 
 			player.selected.each { |x|
 				cards << player.white_cards[x - 1]
 			}
 			
-			@czar.user.notice("#{player.name}: #{cards.join(", ")}")
+			@m.reply("#{player.id}: #{cards.join(", ")}")
 		end
 
-		@czar.user.notice("Choose wisely (^winner <nick>)")
+		@m.reply("Choose wisely (^winner <id>)")
 
 	end
 
@@ -204,7 +225,7 @@ $bot = Cinch::Bot.new do
   configure do |c|
 		c.nick = $nick
     c.server = "irc.freenode.net"
-    c.channels = ["##cardsagainsthumanity"]
+    c.channels = ["##cardsagainsthumanity-bots"]
   end
 
 	on :message, "^create" do |m|
@@ -239,11 +260,21 @@ $bot = Cinch::Bot.new do
 		end
 		if $game.game_state != :nothing then
 			if $game.add_player(m.user) then
-				m.reply "#{m.user.nick} has joined this shindig"
+				m.reply "#{m.user.nick} is in" +
+					"#{" starting next round" if $game.game_state == :play}."
 			else
 			  m.reply "#{m.user.nick} really really wants to play, hurry it up, #{$game.creator}!"
 			end
 		end
+	end
+
+	on :message, /\^boot (.*)/ do |m, name|
+		m.reply "Can't kick yourself #{name}, use ^leave" and return if m.user.nick == name
+		m.reply "NO." and return if m.user.nick != $game.creator
+
+		$game.players.delete_if { |p| p.name == name }
+
+		m.reply "Okay, #{name} is out."
 	end
 
 	on :message, /^\^pick .*/ do |m|
@@ -269,7 +300,8 @@ $bot = Cinch::Bot.new do
 	end
 
 	on :message, /^\^winner .*/ do |m|
-		nick = m.message.match(/\^winner (\S*)/)[1]
+		id = m.message.match(/\^winner ([0-9]+)/)[1]
+		id = id.to_i
 
 		if $game.game_state != :play then
 			m.reply "No game in progress. Start one if you'd like."
@@ -285,7 +317,7 @@ $bot = Cinch::Bot.new do
 			m.reply "Only the Card Czar for this round, #{$game.czar.name}, can pick a winner"
 		end
 
-		$game.pick_winner nick
+		$game.pick_winner id
 	end
 
 	on :message, "^next" do |m|
@@ -326,7 +358,8 @@ $bot = Cinch::Bot.new do
 		if $game.game_state == :nothing then
 			m.reply "Seems that nothing exciting is happening, why don't you start a game, it'll be great!"
 		else
-			m.reply "#{$game.print_players}"
+			m.reply "#{$game.print_players true, true}" if $game.game_state == :play
+			m.reply "#{$game.print_players}" if $game.game_state == :lobby
 		end
 	end
 
