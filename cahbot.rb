@@ -26,7 +26,7 @@ class Player
 	end
 
 	def print_player(pts=true, picked=false)
-		"#{@name} #{" --DIDN'T PICK CARDS YET-- " if picked and not @picked_card and @name != $game.czar.name }(#{@score} points)"
+		"#{@name} #{"--DIDN'T PICK CARDS YET-- " if picked and not @picked_card and @name != $game.czar.name }(#{@score} points)"
 	end
 
 end
@@ -48,7 +48,8 @@ class CAHGame
 	end
 
 	def start_round()
-		@players += @next_players
+		@players += @next_players if @next_players.size > 0
+		@next_players = []
 		@round_in_progress = true
 
 		old = @czar
@@ -219,7 +220,7 @@ class CAHGame
 
 end
 
-$nick = "cahbawt"
+$nick = "HenryCahbotLodge"
 
 $bot = Cinch::Bot.new do
   configure do |c|
@@ -269,12 +270,14 @@ $bot = Cinch::Bot.new do
 	end
 
 	on :message, /\^boot (.*)/ do |m, name|
-		m.reply "Can't kick yourself #{name}, use ^leave" and return if m.user.nick == name
-		m.reply "NO." and return if m.user.nick != $game.creator
-
-		$game.players.delete_if { |p| p.name == name }
-
-		m.reply "Okay, #{name} is out."
+		if m.user.nick == name then
+			m.reply "Can't kick yourself #{name}, use ^leave"
+		elsif m.user.nick != $game.creator then
+			m.reply "No."
+		else
+			$game.players.delete_if { |p| p.name == name }
+			m.reply "Okay, #{name} is out."
+		end
 	end
 
 	on :message, /^\^pick .*/ do |m|
@@ -299,7 +302,7 @@ $bot = Cinch::Bot.new do
 		end
 	end
 
-	on :message, /^\^winner .*/ do |m|
+	on :message, /^\^winner [0-9]+/ do |m|
 		id = m.message.match(/\^winner ([0-9]+)/)[1]
 		id = id.to_i
 
