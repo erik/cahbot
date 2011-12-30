@@ -1,6 +1,7 @@
 #!/usr/bin/env ruby
 
 require 'cinch'
+require 'set'
 
 def reload_cards()
 	$white_cards = File.open("white.txt").readlines().join.split("\n").shuffle
@@ -26,7 +27,12 @@ class Player
 	end
 
 	def print_player(pts=true, picked=false)
-		"#{@name} #{"--DIDN'T PICK CARDS YET-- " if picked and not @picked_card and @name != $game.czar.name }(#{@score} points)"
+		name = @name
+		points = "#{@score}"
+		status = "#{@selected.size}/#{$game.black_card[:blanks]}"
+		status = "CZAR" if $game.czar and @name == $game.czar.name
+
+		"#{name}#{(" - (" + points + ") ")if pts}#{status if picked}"
 	end
 
 end
@@ -72,7 +78,7 @@ class CAHGame
 		deal_round()
 	end
 
-	def pick_card(m, i)
+	def pick_card(m, nums)
 		p = nil
 		@players.each do |player|
 			m.reply "You can't do that! You're the Card Czar!" and return false if m.user.nick == @czar.name
@@ -80,12 +86,13 @@ class CAHGame
 		end
 
 		m.reply "You're not in the game, #{m.user.nick}! ^join to join it." and return if not p
+		m.reply "You already picked. Pay more attention next time!" and return if p.picked_card 
 
 			
-		p.selected << i
-		m.reply "Too many cards #{m.user.nick}! I'm removing that last one for you" \
-			and p.selected.pop if p.selected.size > @black_card[:blanks]
-		p.picked_card = true if p.selected.size == @black_card[:blanks]
+		p.selected = nums
+		p.picked_card = true
+
+		m.reply "Duly noted, #{m.user.nick}"		
 
 		@players.each do |player|
 			return :round_on if not player.picked_card and player.name != @czar.name
@@ -102,6 +109,18 @@ class CAHGame
 		@players << Player.new(user) if @game_state == :lobby
 		@next_players << Player.new(user) if @game_state == :play
 		true
+	end
+
+	def remove_player(m)
+		p = nil
+		@players.each do |player|
+			p = player and break if player.name = m.user.nick
+		end
+
+		m.reply "You need to join the game to leave it" and return if not p
+		m.reply "I didn't like you anyway #{p.name}"
+
+		@players.delete(p)
 	end
 
 	def start_lobby(message)
@@ -213,11 +232,7 @@ class CAHGame
 			
 			@m.reply("#{player.id}: #{cards.join(", ")}")
 		end
-
-		@m.reply("Choose wisely (^winner <id>)")
-
 	end
-
 end
 
 $nick = "HenryCahbotLodge"
@@ -229,7 +244,7 @@ $bot = Cinch::Bot.new do
     c.channels = ["##cardsagainsthumanity-bots"]
   end
 
-	on :message, "^create" do |m|
+	on :message, /^\^create/ do |m|
 		if $game.game_state == :nothing then
 			$game.start_lobby m
 			m.reply "Lobby started for #{$game.channel}, type ^join to join the game, and ^start to start the game"
@@ -238,7 +253,7 @@ $bot = Cinch::Bot.new do
 		end
 	end
 
-	on :message, "^stop" do |m|
+	on :message, /^\^stop/ do |m|
 		if $game.game_state == :nothing then
 			m.reply "No game in progress, ^create to start one"
 		else
@@ -251,11 +266,11 @@ $bot = Cinch::Bot.new do
 		end
 	end
 
-	on :message, "^reload" do |m|
+	on :message, /^\^r(?:eload)?/ do |m|
 		m.reply "Don't worry #{m.user.nick}, I'll implement this eventually"
 	end
 
-	on :message, "^join" do |m|
+	on :message, /^\^j(?:oin)?/ do |m|
 		if $game.game_state == :nothing then
 			m.reply "No game in progress, ^create to start one"
 		end
@@ -269,7 +284,7 @@ $bot = Cinch::Bot.new do
 		end
 	end
 
-	on :message, /\^boot (.*)/ do |m, name|
+	on :message, /^\^b(?:oot)? (.*)/ do |m, name|
 		if m.user.nick == name then
 			m.reply "Can't kick yourself #{name}, use ^leave"
 		elsif m.user.nick != $game.creator then
@@ -280,21 +295,23 @@ $bot = Cinch::Bot.new do
 		end
 	end
 
-	on :message, /^\^pick .*/ do |m|
-		status = :wut
-		m.message.scan(/([0-9]+)/).each { |s|
-			i = s[0].to_i
+	on :message, /^\^p(?:ick)? (.*)/ do |m, rest|
+		m.reply "You can't do that right now, #{m.user.nick}" and return if $game.game_state != :play
 
-			if i > 10 or i < 1 then
-				m.reply "Pick a number 1-10, smartass."
-				return
-			end
-
-			status = $game.pick_card(m, i)
-			return if not status
+		nums = []
+		rest.scan(/[0-9]+/).each { |s|
+			nums << s[0].to_i
 		}
 
-		m.reply "Duly noted, #{m.user.nick}"
+		nums.delete_if { |x| x > 10 or x < 1 }
+		m.reply "Come on, give me at least ONE valid number #{m.user.nick}" and return if nums.size == 0
+		m.reply "Too many cards, man! I need #{$game.black_card[:blanks]}, not #{nums.size}!" and \
+			return if nums.size != $game.black_card[:blanks]
+
+		set = nums.to_set
+		m.reply "No duplicate cards jerkface" and return if set.size != nums.size
+
+		status = $game.pick_card(m, nums)
 
 		if status == :round_over then
 			m.reply "Everyone's selections are in! #{$game.czar.name}, go ahead and pick a winner"
@@ -302,7 +319,7 @@ $bot = Cinch::Bot.new do
 		end
 	end
 
-	on :message, /^\^winner [0-9]+/ do |m|
+	on :message, /^\^w(?:inner)? [0-9]+/ do |m|
 		id = m.message.match(/\^winner ([0-9]+)/)[1]
 		id = id.to_i
 
@@ -318,20 +335,26 @@ $bot = Cinch::Bot.new do
 
 		if $game.czar.name != m.user.nick then
 			m.reply "Only the Card Czar for this round, #{$game.czar.name}, can pick a winner"
+			return
 		end
 
 		$game.pick_winner id
 	end
 
-	on :message, "^next" do |m|
-		$game.start_round
+	on :message, /^\^n(?:ext)?/ do |m|
+		if m.user.nick == $game.creator or m.user.nick == $game.czar.name then
+			m.reply "Okay, skipping this round."
+			$game.start_round
+		else
+			m.reply "Absolutely not."
+		end
 	end
 
 	on :message, "^help" do |m|
-		m.user.notice "Here are some things that "
+		m.user.notice "Here are some things that help."
 	end
 
-	on :message, "^start" do |m|
+	on :message, /^\^start/ do |m|
 		if $game.game_state != :lobby then
 			m.reply "Game should be in lobby to start"
 		else
@@ -347,6 +370,13 @@ $bot = Cinch::Bot.new do
 					$game.start_round
 				end
 		end
+	end
+
+	on :message, "^card" do |m|
+		m.reply "No game in progress right now" and return if $game.game_state != :play
+		card = $game.black_card[:card]
+	
+		m.reply "'#{card}'"
 	end
 
 	on :message, /^\^bother .*/ do |m|
@@ -367,11 +397,7 @@ $bot = Cinch::Bot.new do
 	end
 
 	on :message, "^leave" do |m|
-		m.reply "Fuck you #{m.user.nick}, you cannot abandon this game!"
-	end
-
-	on :message, /#{$nick}:([0-9]+)/ do |m|
-		
+		$game.remove_player m
 	end
 
 	on :message, "^" do |m|
@@ -382,8 +408,10 @@ $bot = Cinch::Bot.new do
 		m.reply $white_cards[rand($white_cards.size)]
 	end
 
-  on :message, "hello" do |m|
-    m.reply "Hello, #{m.user.nick}"
+  on :message, "killurselflol" do |m|
+		m.reply "Nope." and return if m.user.nick != "boredomist"
+		m.reply "k. lol."
+		abort
   end
 end
 
