@@ -229,8 +229,15 @@ class CAHGame
 			player.selected.each { |x|
 				cards << player.white_cards[x - 1]
 			}
-			
-			@m.reply("#{player.id}: #{cards.join(", ")}")
+		
+			i = 0
+			s = @black_card[:card].gsub("_") {
+				i += 1
+				c = player.selected[i - 1] - 1
+				player.white_cards[c]
+			}
+
+			@m.reply("#{player.id}: #{s}")
 		end
 	end
 end
@@ -241,7 +248,7 @@ $bot = Cinch::Bot.new do
   configure do |c|
 		c.nick = $nick
     c.server = "irc.freenode.net"
-    c.channels = ["##cardsagainsthumanity-bots"]
+    c.channels = ["##cardsagainsthumanity"]
   end
 
 	on :message, /^\^create/ do |m|
